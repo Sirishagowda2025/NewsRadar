@@ -1,13 +1,30 @@
 """
-NewsRadar — AI-Powered Industry Intelligence Monitor
-===========================================
+NewsRadar — AI-Powered Industry Intelligence Monitor  v2.0
+===========================================================
 Fetches news from Google News RSS → filters → AI summary → generates HTML.
 
 HOW TO RUN:
-    # 1. pip install ollama feedparser openpyxl
+    # 1. pip install ollama feedparser openpyxl python-dotenv requests
     # 2. Make sure Ollama desktop app is open (or: ollama serve)
-    # 3. Run:
-    python main.py
+    # 3. Copy .env.example → .env and fill in your values
+    # 4. Run:
+    python main.py                        # default industry (e-commerce)
+    python main.py --industry fintech     # fintech profile
+    python main.py --industry healthcare  # healthcare profile
+    python main.py --send-email           # send last report by email
+
+NEW IN v2.0:
+    FEATURE 1 — Multi-industry profiles via --industry flag.
+                Built-in: ecommerce (default), fintech, healthcare, tech.
+                Add your own in INDUSTRY_PROFILES dict in config.py.
+    FEATURE 2 — Filter bar in the HTML report: filter by AI score (5+/7+/9+)
+                and by date (today / this week / all). Instant, no reload.
+    FEATURE 3 — Dark mode toggle button in the topbar. Preference is kept
+                for the session.
+    FEATURE 4 — Slack webhook: post digest summaries to a Slack channel.
+                Set SLACK_WEBHOOK_URL in .env to enable.
+    FEATURE 5 — Live search bar in the report. Type to filter cards across
+                all sections in real time.
 
 OUTPUT:
     newsradar_report.html   <- open in browser, review, drag/remove
@@ -47,6 +64,7 @@ v11 FIXES vs v10:
 """
 
 import os
+import sys
 import feedparser
 import re
 import json
@@ -61,12 +79,168 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# Optional: load .env file automatically if python-dotenv is installed
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Optional: requests for Slack webhook
+try:
+    import requests as _requests
+    _REQUESTS_OK = True
+except ImportError:
+    _REQUESTS_OK = False
+
 from config import (
     EMAIL_CONFIG, SYSTEM_CONFIG, OLLAMA_CONFIG, CATEGORIES,
     IRRELEVANT_SOURCES, is_irrelevant_source,
     RELEVANCE_KEYWORDS, EXCLUDE_KEYWORDS,
     TRADE_IMPACT_KEYWORDS, has_trade_impact,
 )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FEATURE 1 — MULTI-INDUSTRY PROFILES
+# Each profile overrides CATEGORIES, RELEVANCE_KEYWORDS, EXCLUDE_KEYWORDS.
+# The --industry flag selects which profile to use at runtime.
+# ─────────────────────────────────────────────────────────────────────────────
+
+INDUSTRY_PROFILES = {
+    "ecommerce": {
+        "label":    "E-Commerce India",
+        "categories": CATEGORIES,          # uses config.py as-is
+        "relevance": RELEVANCE_KEYWORDS,
+        "exclude":   EXCLUDE_KEYWORDS,
+    },
+    "fintech": {
+        "label": "Fintech & Payments",
+        "categories": {
+            "Payments & UPI": {
+                "html_section": "s-payments", "color": "#2563eb",
+                "description": "UPI, RBI, payment gateway policy changes",
+                "search_queries": [
+                    "UPI transaction limit change 2026", "RBI payment regulation 2026",
+                    "payment gateway fee change India 2026", "NPCI UPI policy update 2026",
+                    "fintech RBI compliance mandate 2026", "digital payment fraud regulation India 2026",
+                    "Razorpay Paytm PhonePe policy update 2026", "BBPS biller compliance 2026",
+                ],
+            },
+            "Lending & Credit": {
+                "html_section": "s-lending", "color": "#7c3aed",
+                "description": "NBFC rules, digital lending, credit policy changes",
+                "search_queries": [
+                    "RBI digital lending guidelines 2026", "NBFC compliance mandate 2026",
+                    "credit card fee change India 2026", "buy now pay later regulation India 2026",
+                    "microfinance regulation change 2026", "personal loan rate change India 2026",
+                ],
+            },
+            "Crypto & Regulations": {
+                "html_section": "s-crypto", "color": "#d97706",
+                "description": "Crypto tax, SEBI, digital assets regulation",
+                "search_queries": [
+                    "crypto regulation India 2026", "SEBI digital asset rule 2026",
+                    "crypto tax TDS India 2026", "VDA virtual digital asset rule India 2026",
+                    "India CBDC digital rupee update 2026",
+                ],
+            },
+        },
+        "relevance": [
+            "upi", "rbi", "payment gateway", "fintech", "nbfc", "digital lending",
+            "credit card", "neft", "rtgs", "imps", "npci", "bbps", "sebi",
+            "crypto", "regulation", "compliance", "fee change", "policy update",
+        ],
+        "exclude": [
+            "ipo", "share price", "quarterly earnings", "cricket", "bollywood",
+            "celebrity", "job opening", "how to invest", "mutual fund tips",
+        ],
+    },
+    "healthcare": {
+        "label": "Healthcare & Pharma",
+        "categories": {
+            "Drug Regulation": {
+                "html_section": "s-drugs", "color": "#dc2626",
+                "description": "CDSCO approvals, drug pricing, pharma compliance",
+                "search_queries": [
+                    "CDSCO drug approval India 2026", "drug price control order India 2026",
+                    "pharma compliance mandate India 2026", "NPPA price revision 2026",
+                    "medical device regulation India 2026", "generic drug policy India 2026",
+                ],
+            },
+            "Health Tech": {
+                "html_section": "s-healthtech", "color": "#059669",
+                "description": "Telemedicine, health data, digital health policy",
+                "search_queries": [
+                    "telemedicine regulation India 2026", "ABDM health data policy 2026",
+                    "digital health compliance India 2026", "Ayushman Bharat policy change 2026",
+                    "health insurance regulation IRDAI 2026",
+                ],
+            },
+        },
+        "relevance": [
+            "cdsco", "drug", "pharma", "nppa", "medical device", "telemedicine",
+            "health data", "abdm", "ayushman", "irdai", "compliance", "approval",
+            "regulation", "price control", "mandate",
+        ],
+        "exclude": [
+            "ipo", "share price", "cricket", "bollywood", "celebrity",
+            "job opening", "fitness tips", "diet", "recipe",
+        ],
+    },
+    "tech": {
+        "label": "Technology & AI",
+        "categories": {
+            "AI & LLMs": {
+                "html_section": "s-ai", "color": "#7c3aed",
+                "description": "AI regulation, model releases, LLM policy changes",
+                "search_queries": [
+                    "AI regulation policy India 2026", "LLM model release update 2026",
+                    "OpenAI Anthropic Google AI update 2026", "EU AI Act compliance 2026",
+                    "India AI policy mandate 2026", "AI copyright regulation 2026",
+                ],
+            },
+            "Cloud & SaaS": {
+                "html_section": "s-cloud", "color": "#0891b2",
+                "description": "Cloud pricing, data localisation, SaaS compliance",
+                "search_queries": [
+                    "AWS Azure GCP pricing change 2026", "data localisation rule India 2026",
+                    "cloud compliance mandate India 2026", "SaaS regulation India 2026",
+                    "CERT-In compliance deadline 2026",
+                ],
+            },
+            "Cybersecurity": {
+                "html_section": "s-security", "color": "#dc2626",
+                "description": "Data breach, CERT-In, cybersecurity policy",
+                "search_queries": [
+                    "CERT-In cybersecurity directive 2026", "data breach regulation India 2026",
+                    "DPDP Act compliance deadline 2026", "cybersecurity mandate India 2026",
+                ],
+            },
+        },
+        "relevance": [
+            "ai regulation", "llm", "openai", "anthropic", "google ai",
+            "cloud pricing", "aws", "azure", "gcp", "data localisation",
+            "cert-in", "dpdp", "cybersecurity", "compliance", "policy update",
+            "mandate", "regulation", "fee change",
+        ],
+        "exclude": [
+            "ipo", "share price", "cricket", "bollywood", "celebrity",
+            "job opening", "how to code", "tutorial", "beginner guide",
+        ],
+    },
+}
+
+
+def load_industry_profile(industry: str) -> dict:
+    """Load the industry profile for the given --industry flag value."""
+    key = industry.lower().strip()
+    if key not in INDUSTRY_PROFILES:
+        print(f"[INDUSTRY] Unknown profile '{industry}'. Available: {', '.join(INDUSTRY_PROFILES)}")
+        print(f"[INDUSTRY] Falling back to 'ecommerce'")
+        key = "ecommerce"
+    profile = INDUSTRY_PROFILES[key]
+    print(f"[INDUSTRY] Loaded profile: {profile['label']}")
+    return profile
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GLOBAL STATE
@@ -692,20 +866,21 @@ def mark_seen(headline, url, snippet=""):
 # KEYWORD FILTER (Gates 1 & 2)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def is_relevant(headline, source, description, category=""):
+def is_relevant(headline, source, description, category="",
+                relevance_kws=None, exclude_kws=None):
+    rel_kws = relevance_kws or RELEVANCE_KEYWORDS
+    exc_kws = exclude_kws   or EXCLUDE_KEYWORDS
     content = (headline + ' ' + source + ' ' + description).lower()
-    for kw in EXCLUDE_KEYWORDS:
+    for kw in exc_kws:
         if kw in content:
             return False
-
     if category == "Trade & Logistics":
-        if any(kw in content for kw in RELEVANCE_KEYWORDS):
+        if any(kw in content for kw in rel_kws):
             return True
         if any(kw in content for kw in TRADE_IMPACT_KEYWORDS):
             return True
         return False
-
-    return any(kw in content for kw in RELEVANCE_KEYWORDS)
+    return any(kw in content for kw in rel_kws)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -746,7 +921,8 @@ def article_date(entry):
 # FETCH ALL  — sequential harvest + AI ranking
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _harvest_query(query, cat_name, hours, cutoff, per_query_cap):
+def _harvest_query(query, cat_name, hours, cutoff, per_query_cap,
+                   relevance_kws=None, exclude_kws=None):
     """Fetches one RSS feed and returns accepted article dicts."""
     feed = fetch_feed(query, hours)
     if not feed:
@@ -770,7 +946,8 @@ def _harvest_query(query, cat_name, hours, cutoff, per_query_cap):
                 continue
             if is_duplicate(headline, link, desc):
                 continue
-            if not is_relevant(headline, source, desc, cat_name):
+            if not is_relevant(headline, source, desc, cat_name,
+                               relevance_kws=relevance_kws, exclude_kws=exclude_kws):
                 continue
             mark_seen(headline, link, desc)
             accepted.append({
@@ -787,7 +964,7 @@ def _harvest_query(query, cat_name, hours, cutoff, per_query_cap):
     return accepted
 
 
-def fetch_all():
+def fetch_all(categories_override=None, relevance_override=None, exclude_override=None):
     hours         = SYSTEM_CONFIG["time_window_hours"]
     cutoff        = datetime.now() - timedelta(hours=hours)
     cat_limit     = SYSTEM_CONFIG["articles_per_category"]
@@ -795,13 +972,19 @@ def fetch_all():
     min_score     = OLLAMA_CONFIG.get("min_relevance_score", 4)
     results       = defaultdict(list)
 
-    for cat_name, cat_cfg in CATEGORIES.items():
+    active_cats      = categories_override or CATEGORIES
+    active_relevance = relevance_override  or RELEVANCE_KEYWORDS
+    active_exclude   = exclude_override    or EXCLUDE_KEYWORDS
+
+    for cat_name, cat_cfg in active_cats.items():
         print(f"\n[{cat_name.upper()}]  ({len(cat_cfg['search_queries'])} queries, sequential)")
 
         candidates = []
         for q in cat_cfg["search_queries"]:
             try:
-                candidates.extend(_harvest_query(q, cat_name, hours, cutoff, per_query_cap))
+                candidates.extend(_harvest_query(q, cat_name, hours, cutoff, per_query_cap,
+                                                relevance_kws=active_relevance,
+                                                exclude_kws=active_exclude))
             except Exception as e:
                 print(f"  [HARVEST ERR] {q}: {e}")
 
@@ -908,6 +1091,77 @@ def export_excel(results):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FEATURE 4 — SLACK WEBHOOK
+# Set SLACK_WEBHOOK_URL in your .env to post a digest to Slack automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def post_to_slack(results: dict, industry_label: str = "E-Commerce") -> bool:
+    """
+    Post a compact digest to Slack via an Incoming Webhook.
+    Only the top article per category is included to keep it readable.
+    Set SLACK_WEBHOOK_URL in .env to enable.
+    """
+    webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return False
+    if not _REQUESTS_OK:
+        print("[SLACK] 'requests' package not installed — pip install requests")
+        return False
+
+    today  = datetime.now().strftime("%b %d, %Y")
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"📡 NewsRadar — {industry_label} Digest · {today}"},
+        },
+        {"type": "divider"},
+    ]
+
+    total = sum(len(v) for v in results.values())
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"*{total} articles* curated across {len(results)} categories."},
+    })
+
+    for cat_name, articles in results.items():
+        if not articles:
+            continue
+        top = articles[0]   # highest-scored article per category
+        score  = top.get("ai_score", "")
+        points = top.get("ai_points", [])
+        summary_line = points[0] if points else ""
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{cat_name}* — {len(articles)} article{'s' if len(articles) != 1 else ''}\n"
+                    f"Top: <{top['link']}|{top['headline'][:90]}> · AI {score}/10\n"
+                    + (f"_{summary_line}_" if summary_line else "")
+                ),
+            },
+        })
+
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": "Sent by *NewsRadar* — open the full HTML report to review and send the email digest."}],
+    })
+
+    try:
+        resp = _requests.post(webhook_url, json={"blocks": blocks}, timeout=10)
+        if resp.status_code == 200:
+            print("[SLACK] Digest posted successfully.")
+            return True
+        else:
+            print(f"[SLACK] Post failed: HTTP {resp.status_code} — {resp.text[:100]}")
+            return False
+    except Exception as e:
+        print(f"[SLACK] Error: {e}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HTML GENERATION
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -955,12 +1209,13 @@ def article_card(article, color):
     </div>"""
 
 
-def generate_html(results):
+def generate_html(results, categories=None):
+    active_cats = categories or CATEGORIES
     today = datetime.now().strftime("%B %d, %Y")
     total = sum(len(arts) for arts in results.values())
 
     sections_html = ""
-    for cat_name, cat_cfg in CATEGORIES.items():
+    for cat_name, cat_cfg in active_cats.items():
         articles = results.get(cat_name, [])
         count    = len(articles)
         color    = cat_cfg["color"]
@@ -1017,6 +1272,7 @@ def generate_html(results):
 <title>NewsRadar — Industry Intelligence Report</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  /* ── FEATURE 3: Dark mode via [data-theme="dark"] on <html> ── */
   :root {{
     --bg:     #f5f6fa;
     --white:  #ffffff;
@@ -1024,40 +1280,93 @@ def generate_html(results):
     --text:   #111827;
     --muted:  #6b7280;
     --light:  #f3f4f8;
+    --ai-bg:  #f8faff;
+    --ai-border: #e0e7ff;
+  }}
+  [data-theme="dark"] {{
+    --bg:     #0f1117;
+    --white:  #1a1d27;
+    --border: #2d3148;
+    --text:   #e5e7eb;
+    --muted:  #9ca3af;
+    --light:  #1f2235;
+    --ai-bg:  #1a1f35;
+    --ai-border: #2d3a6b;
   }}
   * {{ margin:0; padding:0; box-sizing:border-box; }}
-  body {{ background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; font-size:14px; line-height:1.6; }}
+  body {{ background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; font-size:14px; line-height:1.6; transition:background .2s, color .2s; }}
 
   .topbar {{ background:var(--white); border-bottom:2px solid var(--border); padding:0 32px; display:flex; align-items:center; justify-content:space-between; height:64px; position:sticky; top:0; z-index:100; box-shadow:0 2px 12px rgba(0,0,0,.05); }}
   .topbar-brand {{ font-family:'Syne',sans-serif; font-size:19px; font-weight:800; color:var(--text); letter-spacing:-.4px; }}
   .topbar-brand span {{ color:#2563eb; }}
   .topbar-sub {{ font-size:11px; color:var(--muted); margin-top:2px; letter-spacing:.5px; text-transform:uppercase; }}
-  .topbar-right {{ display:flex; align-items:center; gap:10px; }}
+  .topbar-right {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
   .badge {{ font-family:'DM Mono',monospace; font-size:10px; font-weight:600; padding:5px 12px; border-radius:20px; letter-spacing:.5px; text-transform:uppercase; }}
   .badge-count  {{ background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; }}
 
-  .page {{ max-width:1120px; margin:0 auto; padding:32px 24px 80px; }}
-  .report-header {{ margin-bottom:24px; }}
+  /* FEATURE 3: dark mode toggle button */
+  #dark-toggle {{
+    font-family:'DM Mono',monospace; font-size:13px; padding:6px 10px;
+    border-radius:20px; border:1px solid var(--border); background:var(--light);
+    color:var(--text); cursor:pointer; transition:all .15s; line-height:1;
+  }}
+  #dark-toggle:hover {{ border-color:#2563eb; color:#2563eb; }}
 
-  /* FIX 5 — editable title */
+  .page {{ max-width:1120px; margin:0 auto; padding:32px 24px 80px; }}
+  .report-header {{ margin-bottom:16px; }}
+
   .report-title {{
     font-family:'Syne',sans-serif; font-size:22px; font-weight:800; color:var(--text);
     margin-bottom:4px; cursor:pointer; padding:6px 12px; border-radius:6px;
-    transition:background .15s, color .15s; user-select:none;
-    display:inline-block;
+    transition:background .15s, color .15s; user-select:none; display:inline-block;
   }}
-  .report-title:hover {{ background:#f0f4fa; color:#2563eb; }}
-  .report-title-hint {{
-    font-size:10px; color:var(--muted); font-family:'DM Mono',monospace;
-    margin-left:8px; vertical-align:middle; opacity:.6;
-  }}
+  .report-title:hover {{ background:var(--light); color:#2563eb; }}
+  .report-title-hint {{ font-size:10px; color:var(--muted); font-family:'DM Mono',monospace; margin-left:8px; vertical-align:middle; opacity:.6; }}
   #report-title-input {{
     display:none; font-family:'Syne',sans-serif; font-size:22px; font-weight:800;
     border:2px solid #2563eb; border-radius:6px; padding:6px 12px;
     color:var(--text); background:var(--white); width:100%; max-width:700px;
   }}
-
   .report-meta {{ font-family:'DM Mono',monospace; font-size:12px; color:var(--muted); padding-left:12px; }}
+
+  /* FEATURE 5: search bar */
+  .search-wrap {{
+    position:relative; margin-bottom:12px;
+  }}
+  #search-input {{
+    width:100%; max-width:480px; padding:9px 16px 9px 38px;
+    border:1.5px solid var(--border); border-radius:8px;
+    font-family:'DM Sans',sans-serif; font-size:13px;
+    background:var(--white); color:var(--text);
+    transition:border-color .15s, box-shadow .15s;
+    outline:none;
+  }}
+  #search-input:focus {{ border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,.12); }}
+  .search-icon {{
+    position:absolute; left:11px; top:50%; transform:translateY(-50%);
+    color:var(--muted); font-size:15px; pointer-events:none;
+  }}
+  #search-clear {{
+    position:absolute; right:12px; top:50%; transform:translateY(-50%);
+    background:none; border:none; color:var(--muted); cursor:pointer;
+    font-size:16px; display:none; line-height:1;
+  }}
+
+  /* FEATURE 2: filter bar */
+  .filter-bar {{
+    display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; align-items:center;
+  }}
+  .filter-label {{ font-family:'DM Mono',monospace; font-size:11px; color:var(--muted); margin-right:4px; }}
+  .filter-group {{ display:flex; gap:4px; }}
+  .f-btn {{
+    font-family:'DM Mono',monospace; font-size:11px; font-weight:600;
+    padding:5px 12px; border-radius:6px; border:1.5px solid var(--border);
+    background:var(--white); color:var(--muted); cursor:pointer; transition:all .15s;
+  }}
+  .f-btn:hover {{ border-color:#2563eb; color:#2563eb; }}
+  .f-btn.active {{ background:#2563eb; color:#fff; border-color:#2563eb; }}
+  .filter-sep {{ width:1px; background:var(--border); margin:0 4px; }}
+  #filter-result-msg {{ font-family:'DM Mono',monospace; font-size:11px; color:var(--muted); margin-left:8px; }}
 
   .jump-nav {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:28px; }}
   .jump-btn {{ background:var(--white); border:1px solid var(--border); color:var(--muted); padding:7px 14px; border-radius:6px; font-size:12px; font-family:'DM Mono',monospace; text-decoration:none; font-weight:500; transition:all .15s; }}
@@ -1075,6 +1384,7 @@ def generate_html(results):
   .article-card.dragging {{ opacity:.4; box-shadow:0 8px 32px rgba(0,0,0,.15); transform:scale(1.01); z-index:50; }}
   .article-card:hover {{ box-shadow:0 4px 20px rgba(0,0,0,.08); }}
   .article-card.removing {{ opacity:0; transform:translateX(40px); pointer-events:none; }}
+  .article-card.hidden-by-filter {{ display:none !important; }}
   .card-left {{ flex:1; min-width:0; }}
   .article-headline {{ font-size:14px; font-weight:600; color:var(--text); line-height:1.5; margin-bottom:6px; text-decoration:none; display:block; }}
   .article-headline:hover {{ color:#2563eb; text-decoration:underline; }}
@@ -1084,8 +1394,8 @@ def generate_html(results):
   .meta-date {{ font-size:11px; color:var(--muted); }}
   .meta-score {{ font-family:'DM Mono',monospace; font-size:11px; color:var(--muted); cursor:help; }}
 
-  .ai-summary {{ margin:0 0 10px 0; padding:10px 14px; background:#f8faff; border:1px solid #e0e7ff; border-radius:6px; list-style:none; }}
-  .ai-summary li {{ font-size:12.5px; color:#374151; line-height:1.55; padding:3px 0 3px 14px; position:relative; }}
+  .ai-summary {{ margin:0 0 10px 0; padding:10px 14px; background:var(--ai-bg); border:1px solid var(--ai-border); border-radius:6px; list-style:none; }}
+  .ai-summary li {{ font-size:12.5px; color:var(--text); line-height:1.55; padding:3px 0 3px 14px; position:relative; }}
   .ai-summary li::before {{ content:"▸"; position:absolute; left:0; color:#6366f1; font-size:11px; top:4px; }}
 
   .read-link {{ display:inline-flex; align-items:center; font-size:12px; font-weight:600; color:#2563eb; text-decoration:none; }}
@@ -1100,23 +1410,16 @@ def generate_html(results):
 
   .section-dropzone {{ min-height:40px; border:2px dashed transparent; border-radius:8px; transition:border-color .2s, background .2s; }}
   .section-dropzone.drop-active {{ border-color:#2563eb; background:#eff6ff; }}
-
-  /* Highlight the whole section when dragging over empty space in it */
   .section.section-drag-over {{ outline:2px dashed #2563eb; outline-offset:4px; border-radius:10px; background:rgba(37,99,235,.03); }}
-
-  /* Insertion line indicators — slightly thicker for cross-category clarity */
   .article-card.drop-above {{ box-shadow:0 -3px 0 0 #2563eb; }}
   .article-card.drop-below {{ box-shadow:0 3px 0 0 #2563eb; }}
-
   .empty-state {{ text-align:center; padding:32px 20px; color:var(--muted); font-size:13px; background:var(--white); border:1px dashed var(--border); border-radius:8px; }}
 
   #undo-toast {{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px); background:#111827; color:#fff; padding:12px 24px; border-radius:8px; font-size:13px; display:flex; align-items:center; gap:14px; box-shadow:0 6px 24px rgba(0,0,0,.3); transition:transform .3s ease; z-index:999; white-space:nowrap; }}
   #undo-toast.visible {{ transform:translateX(-50%) translateY(0); }}
   #undo-btn {{ background:#2563eb; color:#fff; border:none; padding:5px 14px; border-radius:5px; font-size:12px; cursor:pointer; font-family:'DM Mono',monospace; font-weight:600; }}
   #undo-btn:hover {{ background:#1d4ed8; }}
-
   #drag-label {{ position:fixed; top:-100px; left:-100px; background:#1e3a8a; color:#fff; padding:6px 14px; border-radius:6px; font-size:11px; font-family:'DM Mono',monospace; font-weight:600; pointer-events:none; z-index:9999; white-space:nowrap; }}
-
   footer {{ border-top:2px solid var(--border); padding:24px 0; text-align:center; font-size:11px; color:var(--muted); font-family:'DM Mono',monospace; background:var(--white); }}
   footer strong {{ color:#2563eb; }}
 </style>
@@ -1131,6 +1434,7 @@ def generate_html(results):
   <div class="topbar-right">
     <div class="badge badge-count" id="article-count-badge">{total} articles</div>
     <div class="badge" id="feedback-badge" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;">0 kept · 0 removed</div>
+    <button id="dark-toggle" onclick="toggleDark()" title="Toggle dark mode">🌙</button>
     <button onclick="sendEmail()" id="send-email-btn"
       style="font-family:'DM Mono',monospace;font-size:10px;font-weight:700;padding:6px 16px;
              border-radius:20px;border:1px solid #2563eb;background:#2563eb;color:#fff;
@@ -1145,7 +1449,6 @@ def generate_html(results):
 <div class="page">
 
   <div class="report-header">
-    <!-- FIX 5: title stored in JS var, editable without localStorage -->
     <div>
       <span class="report-title" id="report-title-text" onclick="editTitle()"
             title="Click to edit title">Industry Intelligence Report</span>
@@ -1155,6 +1458,32 @@ def generate_html(results):
            onkeydown="if(event.key==='Enter') saveTitle(); if(event.key==='Escape') cancelTitle();"
            onblur="saveTitle()">
     <div class="report-meta">{today} &nbsp;·&nbsp; <span id="total-count">{total}</span> articles</div>
+  </div>
+
+  <!-- FEATURE 5: Search bar -->
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="search-input" placeholder="Search articles…" oninput="onSearch(this.value)">
+    <button id="search-clear" onclick="clearSearch()" title="Clear">✕</button>
+  </div>
+
+  <!-- FEATURE 2: Filter bar -->
+  <div class="filter-bar">
+    <span class="filter-label">SCORE</span>
+    <div class="filter-group">
+      <button class="f-btn active" data-score="0"  onclick="setScoreFilter(0,this)">All</button>
+      <button class="f-btn"        data-score="5"  onclick="setScoreFilter(5,this)">5+</button>
+      <button class="f-btn"        data-score="7"  onclick="setScoreFilter(7,this)">7+</button>
+      <button class="f-btn"        data-score="9"  onclick="setScoreFilter(9,this)">9+</button>
+    </div>
+    <div class="filter-sep"></div>
+    <span class="filter-label">DATE</span>
+    <div class="filter-group">
+      <button class="f-btn active" data-date="all"   onclick="setDateFilter('all',this)">All</button>
+      <button class="f-btn"        data-date="week"  onclick="setDateFilter('week',this)">This week</button>
+      <button class="f-btn"        data-date="today" onclick="setDateFilter('today',this)">Today</button>
+    </div>
+    <span id="filter-result-msg"></span>
   </div>
 
   <div class="jump-nav">
@@ -1184,12 +1513,111 @@ def generate_html(results):
 // STATE
 // ════════════════════════════════════════════════════════════════════════════
 let _reportTitle = 'Industry Intelligence Report';
-
 const FEEDBACK_PORT = {FEEDBACK_PORT};
 const SERVER_URL    = `http://127.0.0.1:${{FEEDBACK_PORT}}`;
-
 let keepCount   = 0;
 let removeCount = 0;
+
+// Filter state
+let _scoreMin  = 0;
+let _dateFilter = 'all';
+let _searchTerm = '';
+
+// ════════════════════════════════════════════════════════════════════════════
+// FEATURE 3: DARK MODE
+// ════════════════════════════════════════════════════════════════════════════
+let _darkMode = false;
+
+function toggleDark() {{
+  _darkMode = !_darkMode;
+  document.documentElement.setAttribute('data-theme', _darkMode ? 'dark' : '');
+  document.getElementById('dark-toggle').textContent = _darkMode ? '☀️' : '🌙';
+}}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FEATURE 5: SEARCH
+// ════════════════════════════════════════════════════════════════════════════
+function onSearch(val) {{
+  _searchTerm = val.trim().toLowerCase();
+  document.getElementById('search-clear').style.display = val ? 'block' : 'none';
+  applyFilters();
+}}
+
+function clearSearch() {{
+  document.getElementById('search-input').value = '';
+  onSearch('');
+}}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FEATURE 2: SCORE + DATE FILTERS
+// ════════════════════════════════════════════════════════════════════════════
+function setScoreFilter(min, btn) {{
+  _scoreMin = min;
+  btn.closest('.filter-group').querySelectorAll('.f-btn')
+     .forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  applyFilters();
+}}
+
+function setDateFilter(range, btn) {{
+  _dateFilter = range;
+  btn.closest('.filter-group').querySelectorAll('.f-btn')
+     .forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  applyFilters();
+}}
+
+function applyFilters() {{
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const weekAgo = new Date(today); weekAgo.setDate(today.getDate() - 7);
+
+  let visible = 0;
+  document.querySelectorAll('.article-card').forEach(card => {{
+    const score    = parseInt(card.dataset.score || '0', 10);
+    const dateStr  = card.dataset.date || '';
+    const cardDate = dateStr ? new Date(dateStr) : null;
+    const headline = (card.querySelector('.article-headline')?.textContent || '').toLowerCase();
+    const source   = (card.querySelector('.meta-source')?.textContent || '').toLowerCase();
+    const bullets  = (card.querySelector('.ai-summary')?.textContent || '').toLowerCase();
+    const text     = headline + ' ' + source + ' ' + bullets;
+
+    // Score filter
+    const scoreOk = score >= _scoreMin;
+
+    // Date filter
+    let dateOk = true;
+    if (_dateFilter === 'today' && cardDate) {{
+      dateOk = cardDate >= today;
+    }} else if (_dateFilter === 'week' && cardDate) {{
+      dateOk = cardDate >= weekAgo;
+    }}
+
+    // Search filter
+    const searchOk = !_searchTerm || text.includes(_searchTerm);
+
+    const show = scoreOk && dateOk && searchOk;
+    card.classList.toggle('hidden-by-filter', !show);
+    if (show) visible++;
+  }});
+
+  // Update result message
+  const total = document.querySelectorAll('.article-card').length;
+  const msg   = document.getElementById('filter-result-msg');
+  if (_scoreMin > 0 || _dateFilter !== 'all' || _searchTerm) {{
+    msg.textContent = `${{visible}} of ${{total}} shown`;
+  }} else {{
+    msg.textContent = '';
+  }}
+
+  // Update empty states per section
+  document.querySelectorAll('.section').forEach(sec => {{
+    const visibleInSec = sec.querySelectorAll('.article-card:not(.hidden-by-filter)').length;
+    const empty = sec.querySelector('.empty-state');
+    const allCards = sec.querySelectorAll('.article-card').length;
+    if (empty) empty.style.display = (allCards === 0 || visibleInSec === 0) ? 'block' : 'none';
+  }});
+}}
 
 // ════════════════════════════════════════════════════════════════════════════
 // CROSS-CATEGORY DRAG-AND-DROP  (complete rewrite)
@@ -1784,8 +2212,6 @@ def send_from_reviewed_html(html_file: str = "newsradar_report.html") -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    import sys
-
     if "--send-email" in sys.argv:
         print("=" * 70)
         print("NewsRadar — Send Email from Reviewed Report")
@@ -1793,32 +2219,48 @@ def main():
         send_from_reviewed_html()
         return
 
+    # FEATURE 1: --industry flag
+    industry_key = "ecommerce"
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg.startswith("--industry="):
+            industry_key = arg.split("=", 1)[1]
+        elif arg == "--industry" and i + 1 < len(args):
+            industry_key = args[i + 1]
+
+    profile = load_industry_profile(industry_key)
+    active_categories = profile["categories"]
+    active_relevance  = profile["relevance"]
+    active_exclude    = profile["exclude"]
+
     print("=" * 70)
-    print("NewsRadar v1.0")
+    print(f"NewsRadar v2.0  —  Industry: {profile['label']}")
     print(f"Time window       : {SYSTEM_CONFIG['time_window_hours']}h")
-    print(f"Blocked domains   : {len(IRRELEVANT_SOURCES)}")
-    print(f"Categories        : {len(CATEGORIES)} (incl. Trade & Logistics)")
+    print(f"Categories        : {len(active_categories)}")
     print(f"AI enabled        : {OLLAMA_CONFIG.get('enabled', True)}")
     print(f"AI model          : {OLLAMA_CONFIG.get('model', 'qwen3:4b')}")
-    print(f"Min AI score      : {OLLAMA_CONFIG.get('min_relevance_score', 4)}/10")
-    print(f"Articles per cat  : {SYSTEM_CONFIG['articles_per_category']}")
-    print(f"AI score tokens   : 60  (FIX 4 — was 400)")
-    print(f"AI summary tokens : 400")
+    print(f"Min AI score      : {OLLAMA_CONFIG.get('min_relevance_score', 7)}/10")
     print(f"Ollama CPU threads: {_cpu_thread_count()} of {os.cpu_count()} logical cores")
+    slack_url = os.environ.get("SLACK_WEBHOOK_URL", "")
+    print(f"Slack webhook     : {'configured ✓' if slack_url else 'not set (optional)'}")
     fb_exists = os.path.exists(FEEDBACK_FILE)
-    print(f"Feedback file     : {FEEDBACK_FILE} ({'found' if fb_exists else 'not found — will create after first review'})")
+    print(f"Feedback file     : {FEEDBACK_FILE} ({'found' if fb_exists else 'not found yet'})")
     print("=" * 70)
 
     _check_ai()
     _load_feedback_examples()
 
     t0      = time.time()
-    results = fetch_all()
+    results = fetch_all(
+        categories_override=active_categories,
+        relevance_override=active_relevance,
+        exclude_override=active_exclude,
+    )
     total   = sum(len(v) for v in results.values())
     elapsed = time.time() - t0
     print(f"\n[DONE] {total} articles across {len(results)} categories in {elapsed:.0f}s")
 
-    html_out = generate_html(results)
+    html_out = generate_html(results, categories=active_categories)
     out_file = "newsradar_report.html"
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(html_out)
@@ -1826,10 +2268,11 @@ def main():
 
     export_excel(results)
 
+    # FEATURE 4: Slack
+    if slack_url:
+        post_to_slack(results, industry_label=profile["label"])
+
     import webbrowser
-    # FIX 1: ALWAYS open via HTTP server URL, never via file:// URI.
-    # This guarantees Chrome Incognito can load the page and all fetch()
-    # calls to 127.0.0.1 work (file:// URIs block same-origin fetch).
     server = start_feedback_server()
     url    = f"http://127.0.0.1:{FEEDBACK_PORT}/"
 
@@ -1850,16 +2293,21 @@ def main():
     print()
     print("─" * 70)
     print("REVIEW WORKFLOW:")
-    print("  • Click  ✓ Keep    — saved to disk instantly via local server")
-    print("  • Click  ✕ Remove  — card slides out, saved to disk instantly")
+    print("  • Search bar     — filter articles by keyword in real time")
+    print("  • Score filter   — show only AI 5+ / 7+ / 9+ articles")
+    print("  • Date filter    — today / this week / all")
+    print("  • 🌙 Dark mode   — toggle in the topbar")
+    print("  • ✓ Keep / ✕ Remove — saved to disk instantly")
     print("  • Drag cards to reorder within or across sections")
-    print("  • Click report title to edit it before sending")
-    print(f"  • Feedback auto-saved to {FEEDBACK_FILE}")
-    print("    Next run: AI scores adjusted based on your Keep/Remove history")
+    print("  • Click report title to edit before sending")
     print()
     print("WHEN READY TO SEND:")
-    print(f"       python {sys.argv[0]} --send-email")
-    print("  OR click the ✉ Send Email button in the browser")
+    print("  Click ✉ Send Email  OR  python main.py --send-email")
+    print()
+    print("CHANGE INDUSTRY:")
+    print("  python main.py --industry fintech")
+    print("  python main.py --industry healthcare")
+    print("  python main.py --industry tech")
     print("─" * 70)
 
 
