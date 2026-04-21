@@ -146,7 +146,7 @@ All settings live in `config.py` and `.env`.
 
 ```
 newsradar/
-├── main.py              # Entry point — runs the full pipeline
+├── main code.py              # Entry point — runs the full pipeline
 ├── config.py            # All categories, keywords, and settings
 ├── .env                 # Your actual secrets (gitignored — never committed)
 └── README.md
