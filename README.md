@@ -71,7 +71,7 @@ RSS Feeds (100+ queries)
 
 ---
 
-## 🖥️ Demo
+## 🖥️ Demo Preview
 
 ![NewsRadar Demo](screenshot.png)
 
