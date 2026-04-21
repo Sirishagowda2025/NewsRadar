@@ -73,7 +73,7 @@ RSS Feeds (100+ queries)
 
 ## 🖥️ Demo
 
-> 📸 *Screenshot / GIF coming soon — showing the interactive HTML report with drag-drop and the AI summary bullets.*
+![NewsRadar Demo](screenshot.png)
 
 ---
 
@@ -148,9 +148,7 @@ All settings live in `config.py` and `.env`.
 newsradar/
 ├── main.py              # Entry point — runs the full pipeline
 ├── config.py            # All categories, keywords, and settings
-├── .env.example         # Template for your secrets (safe to commit)
 ├── .env                 # Your actual secrets (gitignored — never committed)
-├── .gitignore
 └── README.md
 ```
 
@@ -215,4 +213,4 @@ MIT — free to use, modify, and distribute. See [LICENSE](LICENSE).
 
 Built as an internship project to automate competitive intelligence monitoring for an e-commerce operations team. Repurposed and open-sourced as a general-purpose industry news monitor.
 
-*Questions or suggestions? Open an issue or reach out on [LinkedIn](https://linkedin.com/in/YOUR_PROFILE).*
+*Questions or suggestions? Open an issue or reach out on [LinkedIn](https://www.linkedin.com/in/sirisha-d-064b69278/).*
