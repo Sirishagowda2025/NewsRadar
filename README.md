@@ -15,7 +15,7 @@
 
 <br/>
 
-![NewsRadar Demo](screenshot.png)
+![NewsRadar Demo](screenshot.jpeg)
 
 <br/>
 
@@ -193,7 +193,6 @@ newsradar/
 ├── main.py          ← Full pipeline: scraper · AI · report · server · email
 ├── config.py        ← Categories, search queries, keyword filters
 ├── .env.example     ← Credential template (safe to commit, no real secrets)
-├── .env             ← Your actual credentials (gitignored, never committed)
 └── README.md
 ```
 
@@ -252,7 +251,7 @@ Lower `MIN_RELEVANCE_SCORE=5` in your `.env`, or set `AI_ENABLED=false` to skip 
 Built during an internship to automate competitive intelligence for an e-commerce team.
 Open-sourced because every industry has the same problem.
 
-**[⭐ Star this repo](../../stargazers)** if it's useful · **[Open an issue](../../issues)** if something breaks · **[Connect on LinkedIn](https://linkedin.com/in/YOUR_PROFILE)**
+**[⭐ Star this repo](../../stargazers)** if it's useful · **[Open an issue](../../issues)** if something breaks · **[Connect on LinkedIn](https://www.linkedin.com/in/sirisha-d/)**
 
 <br/>
 
