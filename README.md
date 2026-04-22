@@ -15,7 +15,7 @@
 
 <br/>
 
-![NewsRadar Demo](screenshot.jpeg)
+![NewsRadar Demo](screenshot.png)
 
 <br/>
 
@@ -220,17 +220,20 @@ Lower `MIN_RELEVANCE_SCORE=5` in your `.env`, or set `AI_ENABLED=false` to skip 
 
 ## 🛠️ Tech Stack
 
-```
-Python 3.10+      Core language
-feedparser        Google News RSS ingestion
-Ollama            Local LLM inference (qwen3:4b)
-difflib           Fuzzy headline deduplication
-HTML/CSS/JS       Interactive report UI — zero frameworks
-smtplib           Email delivery
-requests          Slack webhook
-openpyxl          Excel export
-http.server       Local feedback + send-email server
-```
+<div align="center">
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Ollama](https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)
+![HTML5](https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white)
+![CSS3](https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white)
+![Slack](https://img.shields.io/badge/Slack-4A154B?style=for-the-badge&logo=slack&logoColor=white)
+![Gmail](https://img.shields.io/badge/Gmail-EA4335?style=for-the-badge&logo=gmail&logoColor=white)
+![Excel](https://img.shields.io/badge/Excel-217346?style=for-the-badge&logo=microsoftexcel&logoColor=white)
+![RSS](https://img.shields.io/badge/RSS%20Feeds-FFA500?style=for-the-badge&logo=rss&logoColor=white)
+![JSON](https://img.shields.io/badge/JSON-000000?style=for-the-badge&logo=json&logoColor=white)
+
+</div>
 
 ---
 
@@ -249,7 +252,7 @@ http.server       Local feedback + send-email server
 Built during an internship to automate competitive intelligence for an e-commerce team.
 Open-sourced because every industry has the same problem.
 
-**[⭐ Star this repo](../../stargazers)** if it's useful · **[Open an issue](../../issues)** if something breaks · **[Connect on LinkedIn](https://www.linkedin.com/in/sirisha-d-064b69278/)**
+**[⭐ Star this repo](../../stargazers)** if it's useful · **[Open an issue](../../issues)** if something breaks · **[Connect on LinkedIn](https://linkedin.com/in/YOUR_PROFILE)**
 
 <br/>
 
