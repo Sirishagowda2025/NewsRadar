@@ -249,7 +249,7 @@ http.server       Local feedback + send-email server
 Built during an internship to automate competitive intelligence for an e-commerce team.
 Open-sourced because every industry has the same problem.
 
-**[⭐ Star this repo](../../stargazers)** if it's useful · **[Open an issue](../../issues)** if something breaks · **[Connect on LinkedIn](https://linkedin.com/in/YOUR_PROFILE)**
+**[⭐ Star this repo](../../stargazers)** if it's useful · **[Open an issue](../../issues)** if something breaks · **[Connect on LinkedIn](https://www.linkedin.com/in/sirisha-d-064b69278/)**
 
 <br/>
 
